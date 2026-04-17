@@ -1,13 +1,15 @@
 import type { Metadata } from 'next'
 import { notFound } from 'next/navigation'
 
-export const revalidate = 3600 // ISR: revalidate every hour
+export const revalidate = 3600
 import { medusaServerClient } from '@/lib/medusa-client'
 import Image from 'next/image'
 import Link from 'next/link'
-import { Truck, RotateCcw, Shield, ChevronRight } from 'lucide-react'
+import { ChevronRight, Star, Users } from 'lucide-react'
 import ProductActions from '@/components/product/product-actions'
 import ProductAccordion from '@/components/product/product-accordion'
+import ProductBundleOffer from '@/components/product/product-bundle-offer'
+import ProductTrustBadges from '@/components/product/product-trust-badges'
 import { ProductViewTracker } from '@/components/product/product-view-tracker'
 import { getProductPlaceholder } from '@/lib/utils/placeholder-images'
 import { type VariantExtension } from '@/components/product/product-price'
@@ -30,6 +32,22 @@ async function getProduct(handle: string) {
   }
 }
 
+async function getBundleProduct(handle: string) {
+  try {
+    const regionsResponse = await medusaServerClient.store.region.list()
+    const regionId = regionsResponse.regions[0]?.id
+    if (!regionId) return null
+    const response = await medusaServerClient.store.product.list({
+      handle,
+      region_id: regionId,
+      fields: '*variants.calculated_price',
+    })
+    return response.products?.[0] || null
+  } catch {
+    return null
+  }
+}
+
 async function getVariantExtensions(productId: string): Promise<Record<string, VariantExtension>> {
   try {
     const baseUrl = process.env.NEXT_PUBLIC_MEDUSA_BACKEND_URL || 'http://localhost:9000'
@@ -41,7 +59,7 @@ async function getVariantExtensions(productId: string): Promise<Record<string, V
 
     const res = await fetch(
       `${baseUrl}/store/product-extensions/products/${productId}/variants`,
-      { headers, next: { revalidate: 30 } },
+      { headers, next: { revalidate: 30 } }
     )
     if (!res.ok) return {}
 
@@ -60,6 +78,13 @@ async function getVariantExtensions(productId: string): Promise<Record<string, V
   }
 }
 
+// Map a product handle to its bundle counterpart handle
+const BUNDLE_MAP: Record<string, string> = {
+  'premium-bamboo-cutting-board-set': 'bamboo-cutting-board-bundle-double-pack',
+  'luxury-cotton-bath-towel-set': 'luxury-cotton-bath-towel-set',
+  'aromatherapy-soy-candle-collection': 'aromatherapy-soy-candle-collection',
+}
+
 export async function generateMetadata({
   params,
 }: {
@@ -67,10 +92,7 @@ export async function generateMetadata({
 }): Promise<Metadata> {
   const { handle } = await params
   const product = await getProduct(handle)
-
-  if (!product) {
-    return { title: 'Product Not Found' }
-  }
+  if (!product) return { title: 'Product Not Found' }
 
   return {
     title: product.title,
@@ -90,27 +112,37 @@ export default async function ProductPage({
 }) {
   const { handle } = await params
   const product = await getProduct(handle)
-
-  if (!product) {
-    notFound()
-  }
+  if (!product) notFound()
 
   const variantExtensions = await getVariantExtensions(product.id)
 
+  // Check if a bundle counterpart exists
+  const bundleHandle = BUNDLE_MAP[handle]
+  const bundleProduct =
+    bundleHandle && bundleHandle !== handle
+      ? await getBundleProduct(bundleHandle)
+      : null
+  const bundleVariant = bundleProduct?.variants?.[0]
+  const bundlePrice = bundleVariant?.calculated_price?.calculated_amount as number | undefined
+
   const allImages = [
     ...(product.thumbnail ? [{ url: product.thumbnail }] : []),
-    ...(product.images || []).filter((img: any) => img.url !== product.thumbnail),
+    ...(product.images || []).filter((img: { url: string }) => img.url !== product.thumbnail),
   ]
-
-  // Use placeholder if no images
   const displayImages = allImages.length > 0
     ? allImages
     : [{ url: getProductPlaceholder(product.id) }]
 
+  // Inventory from first variant for urgency
+  const firstVariantExt = product.variants?.[0]?.id
+    ? variantExtensions[product.variants[0].id]
+    : null
+  const stockQty = firstVariantExt?.inventory_quantity
+
   return (
     <>
       {/* Breadcrumbs */}
-      <div className="border-b">
+      <div className="border-b bg-white">
         <div className="container-custom py-3">
           <nav className="flex items-center gap-2 text-xs text-muted-foreground">
             <Link href="/" className="hover:text-foreground transition-colors">Home</Link>
@@ -124,9 +156,9 @@ export default async function ProductPage({
 
       <div className="container-custom py-8 lg:py-12">
         <div className="grid lg:grid-cols-2 gap-10 lg:gap-16">
-          {/* Product Images */}
+          {/* ─── Product Images ─── */}
           <div className="space-y-3">
-            <div className="relative aspect-[3/4] overflow-hidden bg-muted rounded-sm">
+            <div className="relative aspect-[4/5] overflow-hidden bg-muted rounded-xl">
               <Image
                 src={displayImages[0].url}
                 alt={product.title}
@@ -135,15 +167,17 @@ export default async function ProductPage({
                 sizes="(max-width: 1024px) 100vw, 50vw"
                 className="object-cover"
               />
+              {/* Eco badge overlay */}
+              <div className="absolute top-4 left-4 bg-white/90 backdrop-blur-sm rounded-full px-3 py-1 flex items-center gap-1.5 shadow-sm">
+                <div className="w-1.5 h-1.5 rounded-full bg-green-500" />
+                <span className="text-[11px] font-semibold text-green-800">Eco-Friendly</span>
+              </div>
             </div>
 
             {displayImages.length > 1 && (
-              <div className="grid grid-cols-4 gap-3">
-                {displayImages.slice(1, 5).map((image: any, idx: number) => (
-                  <div
-                    key={idx}
-                    className="relative aspect-[3/4] overflow-hidden bg-muted rounded-sm"
-                  >
+              <div className="grid grid-cols-4 gap-2">
+                {displayImages.slice(1, 5).map((image: { url: string }, idx: number) => (
+                  <div key={idx} className="relative aspect-square overflow-hidden bg-muted rounded-lg">
                     <Image
                       src={image.url}
                       alt={`${product.title} ${idx + 2}`}
@@ -155,46 +189,78 @@ export default async function ProductPage({
                 ))}
               </div>
             )}
+
+            {/* Social proof strip */}
+            <div className="flex items-center gap-3 rounded-xl bg-amber-50 border border-amber-200 px-4 py-3">
+              <div className="flex">
+                {[...Array(5)].map((_, i) => (
+                  <Star key={i} className="h-4 w-4 fill-amber-400 text-amber-400" />
+                ))}
+              </div>
+              <p className="text-sm font-medium text-amber-900">
+                4.8 / 5 — <span className="font-bold">2,400+ happy customers</span>
+              </p>
+            </div>
           </div>
 
-          {/* Product Info */}
+          {/* ─── Product Info ─── */}
           <div className="lg:sticky lg:top-24 lg:self-start space-y-6">
             {/* Title & Subtitle */}
             <div>
               {product.subtitle && (
-                <p className="text-sm uppercase tracking-[0.15em] text-muted-foreground mb-2">
+                <p className="text-xs uppercase tracking-[0.2em] text-accent font-semibold mb-2">
                   {product.subtitle}
                 </p>
               )}
-              <h1 className="text-h2 font-heading font-semibold">{product.title}</h1>
+              <h1 className="font-heading font-bold text-[1.85rem] sm:text-[2.25rem] leading-tight tracking-tight">
+                {product.title}
+              </h1>
+
+              {/* Viewers indicator */}
+              <div className="flex items-center gap-2 mt-3">
+                <Users className="h-3.5 w-3.5 text-muted-foreground" />
+                <p className="text-xs text-muted-foreground">
+                  <span className="font-semibold text-foreground">23 people</span> are viewing this right now
+                </p>
+              </div>
             </div>
 
             <ProductViewTracker
               productId={product.id}
               productTitle={product.title}
               variantId={product.variants?.[0]?.id || null}
-              currency={product.variants?.[0]?.calculated_price?.currency_code || 'usd'}
+              currency={product.variants?.[0]?.calculated_price?.currency_code || 'inr'}
               value={product.variants?.[0]?.calculated_price?.calculated_amount ?? null}
             />
 
-            {/* Variant Selector + Price + Add to Cart (client component) */}
+            {/* Low stock urgency */}
+            {stockQty != null && stockQty > 0 && stockQty <= 20 && (
+              <div className="flex items-center gap-2 rounded-lg bg-red-50 border border-red-200 px-3 py-2">
+                <span className="inline-block w-2 h-2 rounded-full bg-red-500 animate-pulse flex-shrink-0" />
+                <p className="text-sm font-semibold text-red-800">
+                  Only {stockQty} left in stock — order soon!
+                </p>
+              </div>
+            )}
+
+            {/* Variant Selector + Price + Add to Cart */}
             <ProductActions product={product} variantExtensions={variantExtensions} />
 
-            {/* Trust Signals */}
-            <div className="grid grid-cols-3 gap-4 py-6 border-t">
-              <div className="text-center">
-                <Truck className="h-5 w-5 mx-auto mb-1.5" strokeWidth={1.5} />
-                <p className="text-xs text-muted-foreground">Free Shipping</p>
-              </div>
-              <div className="text-center">
-                <RotateCcw className="h-5 w-5 mx-auto mb-1.5" strokeWidth={1.5} />
-                <p className="text-xs text-muted-foreground">30-Day Returns</p>
-              </div>
-              <div className="text-center">
-                <Shield className="h-5 w-5 mx-auto mb-1.5" strokeWidth={1.5} />
-                <p className="text-xs text-muted-foreground">Secure Checkout</p>
-              </div>
-            </div>
+            {/* Bundle Offer (shown only if a bundle exists for this product) */}
+            {bundleProduct && bundleVariant && (
+              <ProductBundleOffer
+                productHandle={handle}
+                variants={product.variants || []}
+                bundleHandle={bundleHandle}
+                bundleVariantId={bundleVariant.id}
+                bundleLabel="Double Pack — Save 17%"
+                bundlePrice={bundlePrice}
+                bundleSavings="Save vs. buying twice"
+              />
+            )}
+
+            {/* Trust Badges */}
+            <ProductTrustBadges />
 
             {/* Accordion Sections */}
             <ProductAccordion
